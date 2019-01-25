@@ -1,29 +1,35 @@
-%% Script that animates the robot from the DMP demonstrations
+%% Dynamic Movement Primitives Prototype 
 %% by Michail Theofanidis
 
 clear all
 clc
 
-%% Import DMP from demonstration
+%% Import data from demonstration
 
 % id of the DMPset
-id=15;
+id=16;
 name='../Demos/demo';
 name=strcat(name,num2str(id));
 name=strcat(name,'.txt');
 Demo=importdata(name);
 
 % Ploting arguments
-animation=0;
-speed=5;
+animation=1;
+speed=10;
 positions=1;
 sigma=0;
-gaussians=1;
+gaussians=0;
 data=1;
 
-%% Import the manipulator as a robotics.RigidBodyTree Object
+%% Import the structure of the manipulator
 sawyer = importrobot('robot_description/sawyer.urdf');
 sawyer.DataFormat = 'column';
+
+% Define end-effector body name
+eeName = 'right_hand';
+
+%Define the number of joints in the manipulator
+numJoints = 8;
 
 %% Create the joint and time vector
 q=Demo.data(:,2:8);
@@ -38,7 +44,6 @@ r=50;
 blends=10;
 
 %% Compute velocity and acceleration
-
 dq=zeros(l(1),l(2));
 ddq=zeros(l(1),l(2));
 
@@ -58,11 +63,35 @@ for i=1:l(2)
     fq(:,i)=PolyTraj(q(:,i),dq(:,i),t,blends);
     fdq(:,i)=vel(fq(:,i),t);
     fddq(:,i)=vel(fdq(:,i),t);
-
+    
 end
 
-%% Create the cartesian vector
-p=FK(q);
+%% Define the goal location
+
+% goal cartesian location x,y,z
+Pos = [0.4,-0.8,-0.08];
+
+% goal orientation alpha, beta, gamma
+Orient = [0, pi, 0];
+
+% Initialize the seed of the ik.
+q0 = [fq(end,1);0;fq(end,2:end)'];
+
+% Final Pose expressed in an 4x4 HT matrix
+TargetPose = eul2tform(Orient);
+TargetPose(1:3,end) = Pos';
+
+% Define a [1x6] vector of relative weights on the orientation and position error for the inverse kinematics solver.
+weights = ones(1,6);
+
+% Solve for q0 such that the manipulator begins at the first waypoint
+ik = robotics.InverseKinematics('RigidBodyTree',sawyer);
+[goal,solInfo] = ik(eeName,TargetPose,weights,q0);
+disp('Found the goal location.')
+
+%% Reinforcement Learning parameters
+samples=10;
+rate=0.5;
 
 %% Initialize the dmps
 for i=1:l(2)
@@ -82,6 +111,7 @@ w=zeros(dmp(1).ng,l(2));
 for i=1:l(2)
     [ftarget(:,i),w(:,i)]=dmp(i).immitate(fq(:,i),fdq(:,i),fddq(:,i),t,s,psV);
 end
+disp('Immitation learning done.')
 
 %% Perform forward pass of the DMP
 x=zeros(l(1),l(2));
@@ -91,7 +121,25 @@ ddx=zeros(l(1),l(2));
 for i=1:l(2)
     [x(:,i),dx(:,i),ddx(:,i)]=dmp(i).generate(w(:,i),fq(1,i),fq(end,i),t,s,psV);
 end
-    
+disp('Generate the new trajectory.')
+
+%% Adapt the DMPs to reach the desired goal
+x_r=zeros(l(1),l(2));
+dx_r=zeros(l(1),l(2));
+ddx_r=zeros(l(1),l(2));
+
+goal=[goal(1) goal(3:end)'];
+for i=1:l(2)
+    [x_r(:,i),dx_r(:,i),ddx_r(:,i)]=dmp(i).adapt(w(:,i),fq(1,i),goal(i),t,s,psV,samples,rate);
+end
+disp('Adaptation Complete.')
+
+
+%% Create the cartesian vectors
+p=FK(q);
+fp=FK(x);
+fp_r=FK(x_r);
+
 %% Plotting functions
 plot_counter=1;
 
@@ -99,9 +147,10 @@ plot_counter=1;
 if (animation==1)
     
     figure(plot_counter)
-    for j = 1:speed:length(q)
+    for j = 1:speed:length(t)
         
-        jnt=[q(j,1:end)];
+        %jnt=[q(j,1:end)];
+        jnt=[x_r(j,1:end)];
         
         [TeR,TrR,TR]=getSawyerFK_R(jnt);
         
@@ -119,9 +168,12 @@ end
 if (positions==1)
     
     figure(plot_counter)
-    plot3(p(:,1),p(:,2),p(:,3))
-    plot3(x(:,1),x(:,2),x(:,3))
+    hold on
     grid on
+    plot3(p(:,1),p(:,2),p(:,3),'b')
+    plot3(fp(:,1),fp(:,2),fp(:,3),'--r')
+    plot3(fp_r(:,1),fp_r(:,2),fp_r(:,3),'--k')
+    hold off
     
     plot_counter=plot_counter+1;
 end
@@ -144,7 +196,7 @@ if (gaussians==1)
         for j=1:dmp(1).ng
             subplot(l(2),1,i)
             hold on
-            plot(s,psV(:,j),'defaultAxesColorOrder',cg(i,:))
+            plot(s,psV(j,:),'defaultAxesColorOrder',cg(i,:))
             hold off
         end
     end
@@ -156,7 +208,7 @@ if (gaussians==1)
         for j=1:dmp(1).ng
             subplot(l(2),1,i)
             hold on
-            plot(s,psV(:,j)*w(j,i),'defaultAxesColorOrder',cg(i,:))
+            plot(s,psV(j,:)*w(j,i),'defaultAxesColorOrder',cg(i,:))
             hold off
         end
     end
@@ -188,7 +240,7 @@ if (data==1)
         hold off
     end
     plot_counter=plot_counter+1;
-
+    
     figure(plot_counter)
     for j=1:l(2)
         subplot(l(2),1,j)
@@ -204,7 +256,7 @@ end
 
 %% FUNCTIONS
 
-% function for the forward kinematics
+% Function for the forward kinematics
 function [p]=FK(q)
 
 % Initialize the reward function
@@ -273,25 +325,25 @@ for i=1:blends
         window=window+pad;
         down=down+pad;
     end
-
+    
     theta_s=q(up);
     theta_f=q(down);
-
+    
     theta_dot_s=dq(up);
     theta_dot_f=dq(down);
-
+    
     c = MyPoly3(theta_s,theta_f,t(window),theta_dot_s,theta_dot_f);
     dummy= Traj(c,t(1:window));
-
+    
     traj(down-window+1:down)=dummy;
-
+    
     up=down+1;
     down=down+window;
-
-end
-
-end
     
+end
+
+end
+
 %% Polynomial function coefficients
 function alpha = MyPoly3(theta_s,theta_f,time,theta_dot_s,theta_dot_f)
 

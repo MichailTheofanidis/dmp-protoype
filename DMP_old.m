@@ -4,14 +4,9 @@ close all
 clear all
 clc
 
-% %% Load the data of the inverse Models
-% id=3;
-% name='DMP_';
-% name_id=strcat(name,num2str(id));
-% full_name=strcat(name_id,'.mat');
-% Data=load(full_name);
+%% Loard the data
 
-load('Data.mat');
+load('Data/Data_1.mat');
 
 %% Load the time vector
 convert=1000;
@@ -19,14 +14,13 @@ convert=1000;
 % time=Data.DMP.time./convert;
 time=Data.time./convert;
 
-
 time=time-time(1);
 dt=time(2)-time(1);
 
 %% Load the joint trajectories
 jnt_id=2;
+
 target=-2.4898; % New goal position
-%q=Data.DMP.q(:,jnt_id);
 
 q=Data.q(:,jnt_id)
 dq=vel(q)./dt;
@@ -199,22 +193,6 @@ for i=1:samples
 end
 hold off
 
-% figure(5)
-% grid on
-% hold on
-% plot(time,par.dx,'b')
-% plot(time,res_1.yd_xr,'r')
-% plot(time,res_2.yd_xr,'k')
-% hold off
-%
-% figure(6)
-% grid on
-% hold on
-% plot(time,par.ddx,'b')
-% plot(time,res_1.ydd_xr,'r')
-% plot(time,res_2.ydd_xr,'k')
-% hold off
-
 %% FUNCTIONS %%
 
 %% My reward function
@@ -298,7 +276,6 @@ end
 function [res]=forward_DMP(par,target)
 
 f_replay_x=zeros(1,length(par.time));
-fr_x_zeros=zeros(1,length(par.time));
 
 ydd_x_r=0;
 yd_x_r=0;
